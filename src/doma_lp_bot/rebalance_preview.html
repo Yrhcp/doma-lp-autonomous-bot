@@ -1,0 +1,11 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><title>Doma LP — NFT</title>
+<body><h1>Предварительный просмотр NFT</h1>
+<p>Только чтение. Полный цикл не готов: закрытие и подписание отключены. Защищённые NFT не используются.</p>
+<button id="refresh">Обновить</button><p id="status">Проверка…</p><pre id="result"></pre>
+<script>
+'use strict';const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
+const $=id=>document.getElementById(id);
+async function api(path,post=false){const r=await fetch(path,{method:post?'POST':'GET',headers:{'X-Local-Token':token,...(post?{'Content-Type':'application/json'}:{})},...(post?{body:'{}'}:{})});const x=await r.json();if(!r.ok)throw Error(x.error);return x}
+async function poll(){try{let x=await api('/api/state');$('status').textContent=x.running?'Проверка сети…':x.error?'Ошибка: '+x.error:'Готово: только предварительный просмотр';$('result').textContent=x.result?JSON.stringify(x.result,null,2):''}catch(e){$('status').textContent=e.message}setTimeout(poll,2000)}
+$('refresh').onclick=async()=>{try{await api('/api/refresh',true)}catch(e){$('status').textContent=e.message}};if(token)poll();else $('status').textContent='Откройте полный адрес из терминала.';
+</script></body></html>

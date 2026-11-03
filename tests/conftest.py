@@ -1,0 +1,7 @@
+import os
+os.environ.setdefault("WALLET_ADDRESS", "0x2222222222222222222222222222222222222222")
+os.environ.setdefault("AUTONOMOUS_WALLET_ADDRESS", "0x1111111111111111111111111111111111111111")
+os.environ.setdefault("AUTONOMOUS_INITIAL_NFT", "900004")
+os.environ.setdefault("MANUAL_INITIAL_NFT", "900003")
+os.environ.setdefault("MANUAL_INITIAL_MINT_TX", "0x" + "33" * 32)
+os.environ.setdefault("PROTECTED_NFT_IDS", "900001,900002")

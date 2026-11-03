@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "doma-lp-bot"
+version = "0.1.0"
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "GPL-2.0-or-later"}
+dependencies = ["web3>=7,<8", "eth-abi>=5,<7", "rlp>=4,<6", "python-dotenv>=1,<2"]
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+[project.scripts]
+doma-lp = "doma_lp_bot.cli:main"
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+doma_lp_bot = ["rabby_local.html", "rebalance_preview.html"]

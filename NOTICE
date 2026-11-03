@@ -1,0 +1,6 @@
+The TickMath constants and getSqrtRatioAtTick implementation in
+src/doma_lp_bot/v3_math.py are adapted from Uniswap v3-core TickMath.sol,
+which is licensed GPL-2.0-or-later:
+https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickMath.sol
+
+This distribution is offered under GPL-2.0-or-later. See LICENSE.

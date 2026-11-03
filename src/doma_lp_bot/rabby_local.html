@@ -1,0 +1,62 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Doma LP — Rabby</title><style>
+body{font:16px system-ui,sans-serif;max-width:880px;margin:2rem auto;padding:0 1rem;color:#132035}h1{font-size:1.5rem}button{font:inherit;padding:.7rem 1rem;margin:.25rem;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}pre{background:#f1f4f8;padding:1rem;white-space:pre-wrap;overflow-wrap:anywhere}input{width:min(95%,630px);padding:.6rem} .warn{border-left:4px solid #c68000;padding:.75rem;background:#fff8e9}.error{color:#a00} small{color:#46576d}
+</style></head><body>
+<h1 id="heading">Doma LP — ручное открытие</h1><p class="warn" id="warning">Только новая позиция. Максимум 2,5 USDC.e и 0,0011 WETH. Стоимость USDC.e в долларах и будущая L1 fee не гарантированы. Каждый вызов требует вашего подтверждения в Rabby.</p>
+<p id="status">Подключение к локальному боту…</p><p id="error" class="error"></p>
+<button id="connect">Подключить Rabby</button> <span id="account"></span>
+<h2>Следующий шаг</h2><p id="summary"></p><pre id="call">Ожидание проверки…</pre>
+<button id="send" disabled>Проверить ещё раз и открыть Rabby</button>
+<button id="refresh">Пересчитать</button>
+<button id="retry-failed" hidden>Проверить отказ и пересчитать шаг</button>
+<p><small>Проверьте адрес, сеть, сумму, calldata и комиссию в Rabby. Подтверждение инициирует реальную транзакцию. Повторное нажатие заблокировано; если результат неизвестен, найдите hash в Rabby.</small></p>
+<h2>Уже отправленная транзакция</h2><p>После двух подтверждений можно вставить hash, в том числе после перезапуска страницы.</p><input id="hash" placeholder="0x…" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="submit" disabled>Проверить hash</button>
+<p><button id="cancel">Я точно не подписывал — отменить шаг</button></p>
+<div id="cancel-confirmation" class="warn" hidden role="group" aria-label="Подтверждение отмены">
+<p>Подтвердите, что вы точно не подписывали и не отправляли этот шаг в Rabby. Если результат неизвестен, проверьте историю Rabby и введите hash; не подтверждайте отмену. Бот дополнительно проверит журнал и nonce.</p>
+<button id="cancel-confirm">Да, я точно не подписывал — проверить и отменить</button>
+<button id="cancel-back">Назад</button></div>
+<p><small>Остановка интерфейса: Ctrl+C в терминале. Предыдущие подтверждения и ожидающий шаг сохраняются локально.</small></p>
+<script>
+'use strict';
+const token=location.hash.slice(1); history.replaceState(null,'',location.pathname); let provider=null,current=null,attempted=false,awaiting=false,rebalanceMode=false,connected='',lastCallKey=null;
+const $=id=>document.getElementById(id);
+function setError(x){$('error').textContent=x||''}
+function validHash(){return /^0x[0-9a-fA-F]{64}$/.test($('hash').value.trim())}
+function updateHashButton(){$('submit').disabled=!awaiting||!validHash()}
+$('hash').addEventListener('input',updateHashButton);
+async function api(path,data){const r=await fetch(path,{method:data===undefined?'GET':'POST',headers:{'X-Local-Token':token,...(data===undefined?{}:{'Content-Type':'application/json'})},...(data===undefined?{}:{body:JSON.stringify(data)})});const d=await r.json();if(!r.ok)throw Error(d.error||'Ошибка локального интерфейса');return d}
+let announced=[];window.addEventListener('eip6963:announceProvider',e=>{if(e.detail?.info?.rdns==='io.rabby'||e.detail?.provider?.isRabby)announced.push(e.detail.provider)});window.dispatchEvent(new Event('eip6963:requestProvider'));
+function findRabby(){const e=window.ethereum;return announced[0]||(e?.providers||[]).find(p=>p.isRabby)||(e?.isRabby?e:null)}
+$('connect').onclick=async()=>{try{setError('');provider=findRabby();if(!provider)throw Error('Расширение Rabby не найдено в этом браузере.');const a=await provider.request({method:'eth_requestAccounts'});if(!a.length)throw Error('Rabby не предоставил адрес.');connected=a[0].toLowerCase();$('account').textContent='Rabby: '+a[0];}catch(e){setError(e.message)}};
+async function poll(){try{const x=await api('/api/state');$('status').textContent=x.status;if(x.error)setError(x.error);const key=x.call?JSON.stringify([x.call.chainId,x.call.from,x.call.to,x.call.nonce,x.call.data]):null;if((key&&key!==lastCallKey)||(!x.call&&!awaiting&&x.awaiting)){$('hash').value='';if(key)lastCallKey=key}current=x.call;attempted=x.attempted;awaiting=x.awaiting;rebalanceMode=x.rebalance;$('cancel').disabled=!x.awaiting;updateHashButton();$('retry-failed').hidden=!x.failed;if(x.rebalance){$('heading').textContent='Doma LP — ручная ребалансировка';$('warning').textContent='Каждая операция требует подтверждения в Rabby. Временный диапазон ±0,7%; обмен по свежей котировке с допуском 0,5%. Защищённые NFT не используются.'}$('summary').textContent=!current?'':current.step==='decrease'?'Уменьшить ликвидность NFT #'+current.details.tokenId+' до нуля.':current.step==='collect'?'Собрать USDC.e и WETH в свой кошелёк.':current.step==='approve_swap_token'?'Ограничить разрешение токена для Permit2.':current.step==='approve_swap_permit2'?'Ограничить разрешение Permit2 для router по сумме и сроку.':current.step==='swap'?'Обменять часть собранных средств по свежей котировке.':current.step==='approve_mint_usdc'?'Ограничить разрешение USDC.e для нового mint.':current.step==='approve_mint_weth'?'Ограничить разрешение WETH для нового mint.':current.step==='mint_new'?'Открыть новую позицию из собранных средств; временный диапазон ±0,7%.':current.step==='approve_usdc'?'Ограничить разрешение менеджеру: 2,5 USDC.e.':current.step==='approve_weth'?'Ограничить разрешение менеджеру: 0,0011 WETH.':'Открыть новую NFT: максимум 2,5 USDC.e + 0,0011 WETH.';$('call').textContent=current?JSON.stringify(current,null,2):'Нет нового вызова.';$('send').disabled=!current||attempted||!x.running}catch(e){setError(e.message)}setTimeout(poll,1500)}
+const hex=n=>'0x'+BigInt(n).toString(16);
+$('send').onclick=async()=>{ $('send').disabled=true;let walletInvoked=false;try{
+  setError('');if(!provider||!connected)throw Error('Сначала подключите Rabby.');
+  const chain=await provider.request({method:'eth_chainId'});const accounts=await provider.request({method:'eth_accounts'});
+  if(BigInt(chain)!==97477n)throw Error('В Rabby выберите сеть Doma, chain ID 97477.');
+  if(!accounts.length||accounts[0].toLowerCase()!==current.from.toLowerCase())throw Error('Адрес Rabby не совпадает с кошельком в конфигурации.');
+  const {call,revalidation}=await api('/api/arm',{});
+  $('call').textContent=JSON.stringify({call,revalidation},null,2);
+  const tx={chainId:hex(call.chainId),from:call.from,to:call.to,data:call.data,value:'0x0',nonce:hex(call.nonce),gas:hex(call.gasLimit),maxFeePerGas:hex(call.maxFeePerGas),maxPriorityFeePerGas:hex(call.maxPriorityFeePerGas)};
+  walletInvoked=true;let hash;
+  try{hash=await provider.request({method:'eth_sendTransaction',params:[tx]})}
+  catch(e){
+    if(e?.code===4001 && call.step==='decrease'){
+      try{await api('/api/wallet-rejected',{code:4001});setError('Подпись отклонена в Rabby. Проверяю журнал и сеть, затем пересчитаю шаг.');return}
+      catch(check){throw Error('Отказ Rabby получен, но проверка не завершена: '+check.message)}
+    }
+    throw e
+  }
+  $('hash').value=hash;$('status').textContent='Транзакция отправлена кошельком. Hash: '+hash+'. Ожидаются 2 подтверждения.';
+  if(rebalanceMode){await api('/api/hash',{hash});return}
+  for(let i=0;i<45;i++){await new Promise(r=>setTimeout(r,2000));const receipt=await provider.request({method:'eth_getTransactionReceipt',params:[hash]});if(receipt){const head=BigInt(await provider.request({method:'eth_blockNumber'}));if(head>=BigInt(receipt.blockNumber)+1n){await api('/api/hash',{hash});return}}}
+  setError('Ожидание истекло. Найдите hash в Rabby и нажмите «Проверить hash» после двух подтверждений.');
+}catch(e){if(walletInvoked){try{await api('/api/wallet-unknown',{})}catch(_){}}setError('Действие не завершено: '+e.message+(walletInvoked?'. Не повторяйте отправку, пока не проверите состояние в Rabby.':'. Кошелёк не открывался; при изменении цены нажмите «Пересчитать».'))}};
+$('submit').onclick=async()=>{try{setError('');if(!awaiting||!validHash()){setError('Введите hash текущей транзакции: 0x и 64 шестнадцатеричных символа.');return}await api('/api/hash',{hash:$('hash').value.trim()})}catch(e){setError(e.message)}};
+$('refresh').onclick=async()=>{try{setError('');if(awaiting&&(!current||attempted)){$('cancel-confirmation').hidden=false;return}await api('/api/refresh',{})}catch(e){setError(e.message)}};
+$('retry-failed').onclick=async()=>{try{setError('');await api('/api/retry-failed',{})}catch(e){setError(e.message)}};
+$('cancel').onclick=()=>{setError('');$('cancel-confirmation').hidden=false};
+$('cancel-back').onclick=()=>{$('cancel-confirmation').hidden=true};
+$('cancel-confirm').onclick=async()=>{try{setError('');await api('/api/cancel',{});$('cancel-confirmation').hidden=true}catch(e){setError(e.message)}};
+if(!token)setError('Нет локального токена сессии. Откройте адрес целиком из терминала.');else poll();
+</script></body></html>
