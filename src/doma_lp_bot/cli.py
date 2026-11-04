@@ -100,6 +100,8 @@ def main():
         print('\nStopped; журнал сохранён.')
     except Exception as e:
         print(f'ERROR {type(e).__name__}: {e}')
-        raise SystemExit(1)
+        from .manual_open import Blocked
+        # The user-service drop-in prevents restarting this persistent block.
+        raise SystemExit(78 if args.autonomous_live and isinstance(e, Blocked) else 1)
 
 if __name__ == '__main__': main()

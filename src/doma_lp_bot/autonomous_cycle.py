@@ -8,9 +8,10 @@ from dataclasses import replace
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from web3.exceptions import ContractLogicError
 
 from .autonomous_dry_run import validate_selection, PROTECTED_NFTS
-from .manual_open import Blocked, MAX_STEP_FEE_WEI, oracle
+from .manual_open import Blocked, MAX_STEP_FEE_WEI, MANAGER_ADDRESS, USDC, WETH, oracle
 from .rebalance_manual import (active_base, active_scope, cycle_base, prepare, read,
                                reconcile, scope, with_token)
 from .storage import load_state, save_state
@@ -265,6 +266,84 @@ def reconcile_pending(w, cfg):
         return item
 
 
+def refresh_unsigned_mint(w, cfg):
+    """Atomically replace a stale, never-staged mint after verifying the chain.
+
+    A saved hash is never discarded: its broadcast result can be unknown even
+    when one RPC reports matching latest and pending nonces.
+    """
+    from web3 import Web3
+    from .preflight import MINT_ABI
+    validate_selection(cfg)
+    if cfg.range_quote_offset != Decimal('15'):
+        raise Blocked('неверный диапазон для обновления mint')
+    with cycle_lock(cfg):
+        state = _state(cfg)
+        pending = state.get('pending')
+        if not isinstance(pending, dict) or _pending_step(state) != 'mint_new':
+            raise Blocked('нет ожидающего mint')
+        if 'hash' not in pending or pending['hash'] is not None:
+            raise Blocked('у mint есть hash или неизвестный статус; автоматическая замена запрещена')
+        old = pending['call']
+        if (old.get('chainId') != 97477 or old.get('from', '').lower() != cfg.wallet.lower() or
+                old.get('to', '').lower() != MANAGER_ADDRESS.lower() or old.get('value') != 0 or
+                type(old.get('nonce')) is not int):
+            raise Blocked('неверные параметры ожидающего mint')
+        try:
+            fn, decoded = Web3().eth.contract(abi=MINT_ABI).decode_function_input(old['data'])
+            params = decoded['params']; details = old['details']
+            low, high = int(details['sqrtMin']), int(details['sqrtMax'])
+            deadline = params['deadline']
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise Blocked('повреждены параметры ожидающего mint') from exc
+        done = state['completed']
+        if (fn.fn_name != 'mint' or (params['token0'], params['token1'], params['fee'],
+                params['recipient'].lower()) != (USDC, WETH, 100, cfg.wallet.lower()) or
+                deadline != details.get('deadline') or not 0 < low <= high or
+                (params['amount0Desired'], params['amount1Desired']) != tuple(
+                    mint.available(done, state.get('wallet_budget_raw')))):
+            raise Blocked('ожидающий mint не соответствует журналу')
+        if 'wallet_budget_raw' not in state:
+            raise Blocked('цикл начат по прежним правилам; требуется безопасное восстановление')
+
+        def check_nonce():
+            latest = w.eth.get_transaction_count(cfg.wallet, 'latest')
+            queued = w.eth.get_transaction_count(cfg.wallet, 'pending')
+            if latest != old['nonce'] or queued != old['nonce']:
+                raise Blocked('nonce изменился или есть транзакция в очереди; проверьте журнал и сеть')
+
+        check_nonce()
+        fresh = read(w, cfg)  # verifies chain, NFT, pool, balances and pending nonce
+        if fresh['nonce'] != old['nonce']:
+            raise Blocked('nonce снимка не совпадает с ожидающим mint')
+        stale = time.time() >= deadline - 30 or not low <= fresh['sqrt'] <= high
+        if not stale:
+            return pending
+        for index, item in enumerate(done):
+            result = _confirm(w, cfg, {**state, 'completed': done[:index]}, item['call'], item['hash'])
+            step = item['call']['step']
+            if ((step == 'collect' and result != item.get('received_raw')) or
+                    (step == 'swap' and result != item.get('swap_received_raw'))):
+                raise Blocked('подтверждённый шаг не совпадает с журналом')
+        budget = mint.available(done, state['wallet_budget_raw'])
+        remainder = swap.plan_for(fresh, budget, cfg.range_percent, cfg.range_quote_offset)
+        if remainder:
+            if not any(item['call']['step'] == 'swap' for item in done):
+                raise Blocked('новая цена требует swap; автоматическая замена mint остановлена')
+            print('Изменились пропорции: повторный swap запрещён, возможен остаток токенов.', flush=True)
+        # Recalculate the desired amounts from the saved balances and the
+        # verified swap result. Never issue a second swap in this cycle.
+        new = mint.prepare(w, cfg, fresh, done, state['wallet_budget_raw'])
+        if new.get('step') != 'mint_new' or new.get('nonce') != old['nonce']:
+            raise Blocked('повторная подготовка изменила этап или nonce')
+        check_nonce()
+        replacement = {'call': new, 'hash': None}
+        state['pending'] = replacement
+        save_state(cycle_base(cfg), state)
+        print('Устаревший mint пересчитан; подтверждённые операции сохранены.', flush=True)
+        return replacement
+
+
 def broadcast_authorized(w, cfg, call, key_path, *, authorized=False):
     """Broadcast one verified pending step only after separate authorization.
 
@@ -362,6 +441,8 @@ def _run_dry_loop(initial, key_path, snapshot, connect, check_chain, sign_rehear
                     reconcile_pending(w, active)
                     backoff = 5
                     continue
+                if pending.get('call', {}).get('step') == 'mint_new':
+                    pending = refresh_unsigned_mint(w, active)
                 if broadcast is not None:
                     broadcast(w, active, pending['call'], key_path, authorized=True)
                     backoff = 5
@@ -384,6 +465,8 @@ def _run_dry_loop(initial, key_path, snapshot, connect, check_chain, sign_rehear
                 continue
             backoff = 5
             time.sleep(active.poll)
+        except ContractLogicError as exc:
+            raise Blocked('контракт отклонил проверку; состояние сохранено для разбора') from exc
         except rpc_errors as exc:
             monitor.gate.reset_observation()
             print('RPC временно недоступен:', type(exc).__name__, flush=True)

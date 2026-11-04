@@ -33,6 +33,12 @@ wallet and journal.
 - Durable state, saved pending transaction hashes, position tracking across
   restarts, and a local process lock. Unknown transaction outcomes stop progress
   rather than being resent automatically.
+- An unsigned pending mint with an expired deadline or stale price can be
+  rebuilt after checking wallet nonces, the pool, balances and receipts for
+  completed steps. The new mint is simulated before it replaces the pending
+  record atomically; completed collect and swap operations are not repeated.
+  If the changed price would require another swap, the bot may leave tokens
+  outside the position or stop for operator review.
 - A current-fee estimate for all eight possible steps with a 25% buffer before
   starting a cycle, per-step gas limits, and a warning when native ETH is below
   a target of $2 using Coinbase ETH/USD spot. The $2 target is not a hard
@@ -112,6 +118,18 @@ Autonomous state is stored below `~/.local/share/doma-lp/`, including the
 signal state and one file per rebalance cycle. These files are essential for
 recovery and duplicate prevention; protect and back them up privately. The
 read-only monitor uses `LOG_PATH` for diagnostic logs and related state.
+
+An existing pending mint with a saved hash is never automatically replaced,
+even when an RPC reports matching latest and pending nonces: the transaction
+may have reached a different or private mempool. Reconcile it manually. An
+unfinished cycle created by an earlier version may also require review before
+an upgrade; do not clear or overwrite its state to bypass this protection.
+
+For a systemd user service using `Restart=on-failure`, the optional drop-in
+[`deploy/autonomous-stop-restart-loop.conf`](deploy/autonomous-stop-restart-loop.conf)
+prevents restarting a persistent autonomous `Blocked` error (exit status 78)
+and limits other repeated starts. Install and reload the drop-in as part of a
+deliberate service deployment; it is not applied automatically by the CLI.
 
 The legacy manual Rabby UI requires separate `MANUAL_INITIAL_NFT` and
 `MANUAL_INITIAL_MINT_TX` settings. It should be independently reviewed before

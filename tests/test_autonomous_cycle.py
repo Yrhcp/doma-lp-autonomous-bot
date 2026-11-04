@@ -137,6 +137,7 @@ def test_loop_restart_reconciles_unknown_send_before_next_step(tmp_path, monkeyp
         model['pending'] = {'call': {'step': order[model['step']]}, 'hash': None}
         return model['pending']
     monkeypatch.setattr(auto, 'prepare_next', prepare)
+    monkeypatch.setattr(auto, 'refresh_unsigned_mint', lambda w, active: model['pending'])
     def reconcile(w, active):
         assert model['pending']['hash']
         if model['pending']['call']['step'] == 'mint_new': model['active'] = 80001
