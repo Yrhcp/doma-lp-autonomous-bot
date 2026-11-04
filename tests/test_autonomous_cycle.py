@@ -56,7 +56,7 @@ def test_recover_new_nft_and_reject_protected_id(tmp_path, monkeypatch):
 def test_signal_buffer_confirmation_restart_and_cycle_latch(tmp_path):
     c = cfg(tmp_path)
     c.confirm = 60; c.exit_buffer_percent = Decimal('0.1'); c.range_percent = Decimal('0.3')
-    c.range_quote_offset = Decimal('10')
+    c.range_quote_offset = Decimal('15')
     c.poll = 15; c.cooldown = 3600; c.limit = 3; c.max_observation_gap = 90
     s = {'token_id': 900004, 'pool': 'pool', 'lower': 1, 'upper': 2, 'liquidity': 3,
          'block': 1, 'status': 'OUT_OF_RANGE', 'price_usdc_per_weth': Decimal('100.05'),

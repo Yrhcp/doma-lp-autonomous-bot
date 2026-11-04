@@ -61,7 +61,7 @@ class SignalMonitor:
     def __init__(self, cfg):
         validate_selection(cfg)
         if (cfg.confirm != 60 or cfg.exit_buffer_percent != Decimal('0.1') or
-                cfg.range_quote_offset != Decimal('10') or cfg.poll != 15):
+                cfg.range_quote_offset != Decimal('15') or cfg.poll != 15):
             raise Blocked('неверная автономная стратегия')
         self.cfg = cfg
         self.base = str(cfg.log) + '.autonomous-monitor'
@@ -149,8 +149,8 @@ def _confirm(w, cfg, state, call, tx_hash):
     if step in ('decrease', 'collect'):
         return reconcile(w, cfg, call, tx_hash)
     if step in swap.SWAP_STEPS:
-        return swap.reconcile(w, cfg, call, tx_hash, state.get('swap_plan'), mint.available(done[:2]))
-    return mint.reconcile(w, cfg, call, tx_hash, done)
+        return swap.reconcile(w, cfg, call, tx_hash, state.get('swap_plan'), mint.available(done[:2], state.get('wallet_budget_raw')))
+    return mint.reconcile(w, cfg, call, tx_hash, done, state.get('wallet_budget_raw'))
 
 
 def _pending_step(state):
@@ -211,7 +211,17 @@ def prepare_next(w, cfg):
         if len(done) < 2:
             call = prepare(w, cfg, ('decrease', 'collect')[len(done)])
         else:
-            fresh = read(w, cfg); budget = mint.available(done[:2])
+            fresh = read(w, cfg)
+            if 'wallet_budget_raw' not in s:
+                if len(done)>2 or s.get('swap_plan'):
+                    raise Blocked('цикл начат по прежним правилам; требуется безопасное восстановление')
+                balances = fresh.get('balances')
+                if not isinstance(balances, list) or len(balances)!=2:
+                    raise Blocked('не удалось получить балансы токенов')
+                mint.available(done[:2], balances)
+                s['wallet_budget_raw'] = list(balances)
+                save_state(cycle_base(cfg), s)
+            budget = mint.available(done[:2], s['wallet_budget_raw'])
             if 'swap' not in steps and not any(x.startswith('approve_mint_') for x in steps):
                 if not s.get('swap_plan'):
                     plan = swap.plan_for(fresh, budget, cfg.range_percent, cfg.range_quote_offset)
@@ -222,9 +232,9 @@ def prepare_next(w, cfg):
                 if s.get('swap_plan') and s['swap_plan'].get('range_percent') != range_key(cfg):
                     raise Blocked('сохранённый план swap рассчитан для другого диапазона')
                 call = (swap.prepare(w, cfg, fresh, s['swap_plan'], budget, steps)
-                        if s.get('swap_plan') else mint.prepare(w, cfg, fresh, done))
+                        if s.get('swap_plan') else mint.prepare(w, cfg, fresh, done, s['wallet_budget_raw']))
             else:
-                call = mint.prepare(w, cfg, fresh, done)
+                call = mint.prepare(w, cfg, fresh, done, s['wallet_budget_raw'])
         if call['step'] in steps:
             raise Blocked('повтор подтверждённой операции')
         s['pending'] = {'call': call, 'hash': None}
@@ -296,7 +306,7 @@ def _run_monitor(cfg, *, authorized):
 
     directory = Path.home()/'.local/share/doma-lp'
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    initial = replace(cfg, wallet=TEST_WALLET, token_id=INITIAL_NFT, range_percent=Decimal('0.3'), range_quote_offset=Decimal('10'),
+    initial = replace(cfg, wallet=TEST_WALLET, token_id=INITIAL_NFT, range_percent=Decimal('0.3'), range_quote_offset=Decimal('15'),
                       exit_buffer_percent=Decimal('0.1'), confirm=60, poll=15,
                       log=str(directory/'autonomous-monitor.jsonl'))
     validate_selection(initial)

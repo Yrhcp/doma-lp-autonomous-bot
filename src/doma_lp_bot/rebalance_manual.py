@@ -252,12 +252,14 @@ def verify_before_wallet(w,cfg,record):
         from .rebalance_mint import available
         saved=load_state(cycle_base(cfg))
         if not saved or saved.get('scope')!=scope(cfg) or not saved.get('pending') or saved['pending']['call']!=record:raise Blocked('ожидающий вызов не совпадает с журналом')
-        return swap.verify(w,cfg,record,saved.get('swap_plan'),available(saved['completed'][:2]))
+        if getattr(cfg,'range_quote_offset',None)==Decimal('15') and 'wallet_budget_raw' not in saved:raise Blocked('цикл начат по прежним правилам; требуется безопасное восстановление')
+        return swap.verify(w,cfg,record,saved.get('swap_plan'),available(saved['completed'][:2],saved.get('wallet_budget_raw')))
     if record['step'] in ('approve_mint_usdc','approve_mint_weth','mint_new'):
         from .rebalance_mint import verify
         saved=load_state(cycle_base(cfg))
         if not saved or saved.get('scope')!=scope(cfg) or not saved.get('pending') or saved['pending']['call']!=record:raise Blocked('ожидающий вызов не совпадает с журналом')
-        return verify(w,cfg,record,saved['completed'])
+        if getattr(cfg,'range_quote_offset',None)==Decimal('15') and 'wallet_budget_raw' not in saved:raise Blocked('цикл начат по прежним правилам; требуется безопасное восстановление')
+        return verify(w,cfg,record,saved['completed'],saved.get('wallet_budget_raw'))
     s=read(w,cfg);p=validate_call(cfg,record,s)
     tx={'from':cfg.wallet,'to':MANAGER_ADDRESS,'value':0,'data':record['data']}
     result=decode(['uint256','uint256'],w.eth.call(tx,block_identifier=s['block']))

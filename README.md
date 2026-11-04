@@ -18,12 +18,18 @@ wallet and journal.
 - Read-only position, tick, token and estimated fee-growth monitoring.
 - A dedicated-wallet autonomous mode for the configured Doma contracts and
   0.01% pool; contract identities and token/NFT ownership are checked.
-- A fixed **−10/+10 USDC.e per WETH** target range, rounded to usable pool
+- A fixed **−15/+15 USDC.e per WETH** target range, rounded to usable pool
   ticks. An exit must exceed the existing 0.1% buffer and persist for 60
   seconds. There is no one-hour cooldown or daily rebalance quota in this mode.
 - Sequential decrease, collect, limited approvals, swap when needed, and mint.
   Each step uses fresh data, an `eth_call` check, amount limits and receipt
   reconciliation before advancing. Swap slippage is limited to 0.5%.
+- After collect, the bot snapshots all available WETH and USDC.e in the
+  dedicated wallet, including leftovers from previous cycles, and uses that
+  saved budget to calculate the swap and mint. Native ETH remains for gas.
+  Transfers received after this snapshot are considered in the next cycle.
+  The bot can leave dust because of rounding, price moves, and its existing
+  threshold that skips an indicative swap worth at most 0.01 USDC.e.
 - Durable state, saved pending transaction hashes, position tracking across
   restarts, and a local process lock. Unknown transaction outcomes stop progress
   rather than being resent automatically.

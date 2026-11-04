@@ -18,13 +18,19 @@ def target_ticks(raw, width, offset=None):
     return range_for_offset(raw, offset, 1) if offset is not None else range_for_quote(raw, width, 1, False)
 
 
-def available(done):
-    """Use only amounts actually received in the verified Collect event."""
+def available(done, starting_balances=None):
+    """Use the journaled wallet balances, or legacy collected amounts."""
     if len(done)<2 or [x['call']['step'] for x in done[:2]]!=['decrease','collect']:
         raise Blocked('collect не подтверждён')
     value=done[1].get('received_raw')
     if not isinstance(value,list) or len(value)!=2 or any(type(x) is not int or x<0 for x in value) or not any(value):
         raise Blocked('нет подтверждённых сумм collect')
+    if starting_balances is not None:
+        if (not isinstance(starting_balances,list) or len(starting_balances)!=2 or
+            any(type(x) is not int or x<0 for x in starting_balances) or
+            any(starting_balances[i]<value[i] for i in (0,1))):
+            raise Blocked('неверный сохранённый баланс кошелька')
+        value=starting_balances
     value=list(value)
     swaps=[x for x in done if x['call']['step']=='swap']
     if len(swaps)>1:raise Blocked('повторный swap заблокирован')
@@ -67,8 +73,8 @@ def mint_data(cfg,s,budget,after_swap=False):
       'expected_raw':list(used),'range':f'±{offset} USDC.e' if offset is not None else f'временный ±{width}%, не оценка волатильности'}
 
 
-def next_step(w,cfg,s,done):
-    budget=available(done)
+def next_step(w,cfg,s,done,starting_balances=None):
+    budget=available(done,starting_balances)
     if any(s['balances'][i]<budget[i] for i in (0,1)):raise Blocked('полученные токены уже перемещены')
     steps=[x['call']['step'] for x in done]
     if 'swap' not in steps:check_no_swap(s,budget,getattr(cfg,'range_percent',Decimal('0.7')),getattr(cfg,'range_quote_offset',None))
@@ -107,21 +113,21 @@ def check_record(cfg,s,record,budget,after_swap=False):
     return p
 
 
-def prepare(w,cfg,s,done):
+def prepare(w,cfg,s,done,starting_balances=None):
     from .rebalance_manual import read, fee_check
-    budget=available(done);step,target,data,details=next_step(w,cfg,s,done)
+    budget=available(done,starting_balances);step,target,data,details=next_step(w,cfg,s,done,starting_balances)
     tx={'from':cfg.wallet,'to':target,'value':0,'data':data}
     gas=w.eth.estimate_gas(tx,block_identifier=s['block']);limit=(gas*13+9)//10
     priority=1_000_000;maxfee=max(w.eth.gas_price*2,s['base_fee']*2+priority)
     record={'step':step,'chainId':97477,'from':cfg.wallet,'to':target,'data':data,'value':0,'nonce':s['nonce'],
             'gasLimit':limit,'maxFeePerGas':maxfee,'maxPriorityFeePerGas':priority,'details':details}
-    record['revalidation']=verify(w,cfg,record,done)
+    record['revalidation']=verify(w,cfg,record,done,starting_balances)
     return record
 
 
-def verify(w,cfg,record,done):
+def verify(w,cfg,record,done,starting_balances=None):
     from .rebalance_manual import read,fee_check,current_id
-    s=read(w,cfg);budget=available(done);p=check_record(cfg,s,record,budget,after_swap=any(x['call']['step']=='swap' for x in done))
+    s=read(w,cfg);budget=available(done,starting_balances);p=check_record(cfg,s,record,budget,after_swap=any(x['call']['step']=='swap' for x in done))
     tx={'from':cfg.wallet,'to':record['to'],'value':0,'data':record['data']}
     if record['step']=='mint_new':
         for i,token in enumerate((USDC,WETH)):
@@ -141,9 +147,9 @@ def verify(w,cfg,record,done):
     return {'block':s['block'],'tick':s['tick'],'simulated_amounts_raw':amounts,'gasEstimate':estimate,'l1EstimateWei':l1,'operatorEstimateWei':op}
 
 
-def reconcile(w,cfg,record,h,done):
+def reconcile(w,cfg,record,h,done,starting_balances=None):
     from .rebalance_manual import FailedTransaction,current_id
-    budget=available(done);step=record['step']
+    budget=available(done,starting_balances);step=record['step']
     if record['chainId']!=97477 or record['from'].lower()!=cfg.wallet.lower() or record['value']!=0:raise Blocked('неверные параметры журнала')
     if step in ('approve_mint_usdc','approve_mint_weth'):
         i=0 if step=='approve_mint_usdc' else 1;token=(USDC,WETH)[i]
